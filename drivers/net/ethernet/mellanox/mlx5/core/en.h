@@ -652,6 +652,9 @@ struct mlx5e_priv {
 	u16 q_counter;
 	const struct mlx5e_profile *profile;
 	void                      *ppriv;
+
+	struct sk_buff* (*tx_handler)(struct sk_buff *skb) __rcu;
+	struct sk_buff* (*rx_handler)(struct sk_buff *skb) __rcu;
 };
 
 void mlx5e_build_ptys2ethtool_map(void);
