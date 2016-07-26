@@ -176,6 +176,7 @@ out_header_dma:
 out:
 	return rc;
 }
+EXPORT_SYMBOL(mlx_accel_core_rdma_post_send);
 
 static void mlx_accel_core_rdma_handle_pending(struct mlx_accel_core_conn *conn)
 {

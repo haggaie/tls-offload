@@ -436,6 +436,9 @@ struct sock {
 #ifdef CONFIG_SECURITY
 	void			*sk_security;
 #endif
+#ifdef CONFIG_NET_TLS_OFFLOAD
+	void			*sk_tls_offload;
+#endif
 	struct sock_cgroup_data	sk_cgrp_data;
 	struct mem_cgroup	*sk_memcg;
 	void			(*sk_state_change)(struct sock *sk);
