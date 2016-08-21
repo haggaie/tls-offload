@@ -69,7 +69,7 @@ struct mlx5e_channel_param {
 	struct mlx5e_cq_param      icosq_cq;
 };
 
-static struct sk_buff *mlx5e_accel_tx_handler(struct sk_buff *skb)
+static struct sk_buff *mlx5e_accel_tx_handler(struct sk_buff *skb, bool *swp)
 {
 	return skb;
 }
@@ -794,6 +794,8 @@ static int mlx5e_enable_sq(struct mlx5e_sq *sq, struct mlx5e_sq_param *param)
 	MLX5_SET(sqc,  sqc, state,		MLX5_SQC_STATE_RST);
 	MLX5_SET(sqc,  sqc, tis_lst_sz,		param->icosq ? 0 : 1);
 	MLX5_SET(sqc,  sqc, flush_in_error_en,	1);
+	if (MLX5_CAP_GEN(mdev, fpga) && !param->icosq)
+		MLX5_SET(sqc, sqc, allow_swp, true);
 
 	MLX5_SET(wq,   wq, wq_type,       MLX5_WQ_TYPE_CYCLIC);
 	MLX5_SET(wq,   wq, uar_page,      sq->uar.index);
