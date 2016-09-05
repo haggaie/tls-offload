@@ -384,6 +384,7 @@ void tcp_init_sock(struct sock *sk)
 	tcp_init_xmit_timers(sk);
 	tcp_prequeue_init(tp);
 	INIT_LIST_HEAD(&tp->tsq_node);
+	INIT_LIST_HEAD(&tp->offload_list);
 
 	icsk->icsk_rto = TCP_TIMEOUT_INIT;
 	tp->mdev_us = jiffies_to_usecs(TCP_TIMEOUT_INIT);
