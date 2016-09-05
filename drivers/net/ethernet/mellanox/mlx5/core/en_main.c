@@ -69,7 +69,16 @@ struct mlx5e_channel_param {
 	struct mlx5e_cq_param      icosq_cq;
 };
 
-static struct sk_buff *mlx5e_accel_tx_handler(struct sk_buff *skb, bool *swp)
+static netdev_features_t mlx5e_accel_feature_chk(struct sk_buff *skb,
+						 struct net_device *netdev,
+						 netdev_features_t features,
+						 bool *done)
+{
+	return features;
+}
+
+static struct sk_buff *mlx5e_accel_tx_handler(struct sk_buff *skb,
+					      struct mlx5e_swp_info *swp)
 {
 	return skb;
 }
