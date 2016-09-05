@@ -99,9 +99,6 @@ static int xfrm_output_one(struct sk_buff *skb, int err)
 
 		skb_dst_force(skb);
 
-		/* Inner headers are invalid now. */
-		skb->encapsulation = 0;
-
 		if (skb_shinfo(skb)->gso_type & SKB_GSO_ESP) {
 			x->type->encap(x, skb);
 		} else {
@@ -241,6 +238,7 @@ int xfrm_output(struct sock *sk, struct sk_buff *skb)
 			err = -ENOMEM;
 			return err;
 		}
+		skb->encapsulation = 1;
 
 		skb->sp->xvec[skb->sp->len++] = x;
 		xfrm_state_hold(x);
@@ -252,6 +250,8 @@ int xfrm_output(struct sock *sk, struct sk_buff *skb)
 		}
 		if (x->xso.dev->features & NETIF_F_HW_ESP_TX_CSUM)
 			goto out;
+	} else {
+		skb->encapsulation = 0;
 	}
 
 	if (skb_is_gso(skb))
