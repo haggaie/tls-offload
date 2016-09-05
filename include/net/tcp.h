@@ -893,6 +893,8 @@ struct rate_sample {
 
 struct tcp_offload_ops {
 	void (*clean_offloaded_data)(struct sock *sk, int closing_sk);
+	void (*on_transmit)(struct sock *sk, struct sk_buff *skb, u32 seq,
+			    u32 end_seq);
 };
 
 struct tcp_congestion_ops {
