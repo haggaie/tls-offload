@@ -1923,4 +1923,7 @@ static inline void tcp_listendrop(const struct sock *sk)
 	__NET_INC_STATS(sock_net(sk), LINUX_MIB_LISTENDROPS);
 }
 
+ssize_t do_tcp_sendpages(struct sock *sk, struct page *page, int offset,
+			 size_t size, int flags);
+
 #endif	/* _TCP_H */
