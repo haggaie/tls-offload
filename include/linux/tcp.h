@@ -362,6 +362,7 @@ struct tcp_sock {
 	u32	*saved_syn;
 
 	struct list_head offload_list;
+	u32 expected_seq;
 };
 
 enum tsq_flags {
