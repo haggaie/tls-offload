@@ -111,7 +111,6 @@ struct sec_path *secpath_dup(struct sec_path *src)
 		return NULL;
 
 	memset(sp, 0, sizeof(*sp));
-	sp->len = 0;
 	if (src) {
 		int i;
 
