@@ -87,7 +87,7 @@ static struct sk_buff *esp4_gso_segment(struct sk_buff *skb,
 	__u32 seqhi;
 
 	sp = skb->sp;
-	if (!sp && !sp->len)
+	if (!sp || !sp->len)
 		goto out;
 
 	seq = sp->seq.low;
