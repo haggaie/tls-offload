@@ -189,7 +189,7 @@ static struct sk_buff *create_sync_skb(
 		return NULL;
 	}
 
-	sync_size = tcp_seq - record->start_seq;
+	sync_size = tcp_seq - (record->end_seq - record->len);
 	nskb->data_len = sync_size;
 	while (sync_size > 0) {
 		skb_shinfo(nskb)->frags[i] = record->frags[i];
