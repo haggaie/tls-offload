@@ -147,6 +147,11 @@ config CRYPTO_USER
 	  Userspace configuration for cryptographic instantiations such as
 	  cbc(aes).
 
+config CRYPTO_USER_KTLS
+        tristate "User-space interface for KTLS"
+        depends on CRYPTO_USER_API
+	select STREAM_PARSER
+
 config CRYPTO_MANAGER_DISABLE_TESTS
 	bool "Disable run-time self tests"
 	default y
