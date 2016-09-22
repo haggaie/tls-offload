@@ -360,9 +360,6 @@ struct tcp_sock {
 	 */
 	struct request_sock *fastopen_rsk;
 	u32	*saved_syn;
-
-	struct list_head offload_list;
-	u32 expected_seq;
 };
 
 enum tsq_flags {

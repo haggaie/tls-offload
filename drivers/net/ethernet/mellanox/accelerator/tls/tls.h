@@ -46,6 +46,8 @@
 
 #include "../core/accel_core_sdk.h"
 
+#include "../../../../crypto/af_ktls_offload.h"
+
 #define DRIVER_NAME		"mlx_tls"
 #define DRIVER_VERSION	"0.1"
 #define DRIVER_RELDATE	"January 2016"
@@ -85,11 +87,10 @@ struct mlx_tls_dev {
 	struct mutex id_mutex;
 };
 
-struct tls_offload_context {
+struct mlx_tls_offload_context {
+	struct ktls_offload_context context;
 	struct list_head ktls_del_list;
 	struct net_device *netdev;
-	spinlock_t lock;
-	uint32_t expectedSN;
 	uint32_t swid;
 };
 

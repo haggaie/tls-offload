@@ -102,12 +102,12 @@ static LIST_HEAD(ktls_del_list);
 #define UPDATE_CTX_FIELD(field, value) UPDATE_CTX_FIELD_SIZE(field, value, sizeof(*value))
 
 int mlx_ktls_hw_start_cmd(struct mlx_tls_dev *dev, struct sock *sk,
-				  struct tls_offload_context *data,
-				  struct ktls_keys *keys) {
+			  struct mlx_tls_offload_context *context,
+			  struct ktls_keys *keys) {
 	struct mlx_accel_core_dma_buf *buf;
 	struct setup_stream_cmd *cmd;
 	struct inet_sock *inet = inet_sk(sk);
-	__be32 expectedSN = htonl(data->expectedSN);
+	__be32 expectedSN = htonl(context->context.expectedSN);
 	int size = sizeof(*buf) + sizeof(*cmd);
 
 	buf = kzalloc(size, GFP_KERNEL);
@@ -159,7 +159,7 @@ int mlx_ktls_hw_start_cmd(struct mlx_tls_dev *dev, struct sock *sk,
 void mlx_ktls_hw_stop_cmd(struct net_device *netdev, struct sock *sk)
 {
 	unsigned long flags;
-	struct tls_offload_context *context = sk->sk_tls_offload;
+	struct mlx_tls_offload_context *context = sk->sk_tls_offload;
 
 	pr_info("mlx_ktls_stop\n");
 
@@ -173,13 +173,13 @@ void mlx_ktls_hw_stop_cmd(struct net_device *netdev, struct sock *sk)
 static void mlx_ktls_del_work(struct work_struct *w)
 {
 	unsigned long flags;
-	struct tls_offload_context *context;
+	struct mlx_tls_offload_context *context;
 	struct mlx_tls_dev *dev;
 
 	while (true) {
 		spin_lock_irqsave(&ktls_del_lock, flags);
 		context = list_first_entry_or_null(&ktls_del_list,
-				struct tls_offload_context, ktls_del_list);
+				struct mlx_tls_offload_context, ktls_del_list);
 		if (!context) {
 			spin_unlock_irqrestore(&ktls_del_lock, flags);
 			return;

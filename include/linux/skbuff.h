@@ -747,8 +747,7 @@ struct sk_buff {
 #ifdef CONFIG_XFRM
 	__u8			xfrm_gro:1;
 #endif
-	__u8			sync_skb:1;
-	/* 0 to 4 bit hole */
+	/* 1 to 5 bit hole */
 
 #ifdef CONFIG_NET_SCHED
 	__u16			tc_index;	/* traffic control index */

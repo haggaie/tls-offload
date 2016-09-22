@@ -1034,9 +1034,6 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 	/* Our usage of tstamp should remain private */
 	skb->tstamp.tv64 = 0;
 
-	if (icsk->icsk_offload_ops)
-		icsk->icsk_offload_ops->on_transmit(sk, skb, start_seq,
-						    end_seq);
 	/* Cleanup our debris for IP stacks */
 	memset(skb->cb, 0, max(sizeof(struct inet_skb_parm),
 			       sizeof(struct inet6_skb_parm)));

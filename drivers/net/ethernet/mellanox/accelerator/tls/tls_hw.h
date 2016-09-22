@@ -36,11 +36,13 @@
 
 #include "tls.h"
 
+#include "../../../../crypto/af_ktls_offload.h"
+
 int mlx_tls_hw_init(void);
 void mlx_tls_hw_deinit(void);
 
 int mlx_ktls_hw_start_cmd(struct mlx_tls_dev *dev, struct sock *sk,
-				  struct tls_offload_context *data,
+				  struct mlx_tls_offload_context *context,
 				  struct ktls_keys *keys);
 void mlx_ktls_hw_stop_cmd(struct net_device *netdev, struct sock *sk);
 void mlx_tls_hw_qp_recv_cb(void *cb_arg, struct mlx_accel_core_dma_buf *buf);

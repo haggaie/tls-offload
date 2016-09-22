@@ -36,8 +36,6 @@
 #include "tls_hw.h"
 #include <linux/netdevice.h>
 
-#include "../../../../crypto/af_ktls.h"
-
 static LIST_HEAD(mlx_tls_devs);
 static DEFINE_MUTEX(mlx_tls_mutex);
 
@@ -60,9 +58,16 @@ static struct mlx_tls_dev *find_mlx_tls_dev_by_netdev(
 	return NULL;
 }
 
+struct mlx_tls_offload_context *get_tls_context(struct sock *sk)
+{
+	return container_of(sk->sk_tls_offload,
+			    struct mlx_tls_offload_context,
+			    context);
+}
+
 static int mlx_ktls_add(struct net_device *netdev, struct sock *sk,
 		struct ktls_keys *keys) {
-	struct tls_offload_context *context;
+	struct mlx_tls_offload_context *context;
 	struct mlx_tls_dev *dev;
 	int swid;
 	int ret;
@@ -85,7 +90,7 @@ static int mlx_ktls_add(struct net_device *netdev, struct sock *sk,
 		goto out;
 	}
 
-	context = kmalloc(sizeof(struct tls_offload_context), GFP_KERNEL);
+	context = kzalloc(sizeof(*context), GFP_KERNEL);
 	if (!context) {
 		mutex_lock(&dev->id_mutex);
 		idr_remove(&dev->swid_idr, context->swid);
@@ -95,9 +100,8 @@ static int mlx_ktls_add(struct net_device *netdev, struct sock *sk,
 	}
 
 	context->swid = swid;
-	context->expectedSN = tcp_sk(sk)->write_seq;
-	spin_lock_init(&context->lock);
-	sk->sk_tls_offload = context;
+	context->context.expectedSN = tcp_sk(sk)->write_seq;
+	sk->sk_tls_offload = &context->context;
 
 	mlx_ktls_hw_start_cmd(dev, sk, context, keys);
 	try_module_get(THIS_MODULE);
@@ -109,7 +113,7 @@ out:
 
 static void mlx_ktls_del(struct net_device *netdev, struct sock *sk)
 {
-	struct tls_offload_context *context = sk->sk_tls_offload;
+	struct mlx_tls_offload_context *context = get_tls_context(sk);
 
 	if (context)
 		mlx_ktls_hw_stop_cmd(netdev, sk);
@@ -152,11 +156,95 @@ static void remove_pet(struct sk_buff *skb, struct pet *pet)
 #define SYNDROME_OFFLOAD_REQUIRED 32
 #define SYNDROME_SYNC 33
 
+static struct sk_buff *create_sync_skb(
+		struct sk_buff *skb,
+		struct mlx_tls_offload_context *context)
+{
+	int headln = skb_transport_offset(skb) + tcp_hdrlen(skb);
+	struct sk_buff *nskb = alloc_skb(headln, GFP_ATOMIC);
+	int sync_size;
+
+	struct tls_record_info *record;
+	struct iphdr *iph;
+	struct tcphdr *th;
+	int mss;
+	struct pet *pet;
+	u32 tcp_seq;
+	__be16 tcp_seq_low;
+	unsigned long flags;
+	int i = 0;
+
+	if (!nskb)
+		return NULL;
+
+	skb_put(nskb, headln);
+	tcp_seq = ntohl(tcp_hdr(skb)->seq);
+	spin_lock_irqsave(&context->context.lock, flags);
+	record = ktls_get_record(&context->context, tcp_seq);
+
+	if (!record) {
+		pr_err("record not found for seq %u\n", tcp_seq);
+		spin_unlock_irqrestore(&context->context.lock, flags);
+		dev_kfree_skb_any(nskb);
+		return NULL;
+	}
+
+	sync_size = tcp_seq - record->start_seq;
+	nskb->data_len = sync_size;
+	while (sync_size > 0) {
+		skb_shinfo(nskb)->frags[i] = record->frags[i];
+		skb_frag_ref(nskb, i);
+		sync_size -= skb_frag_size(
+				&skb_shinfo(nskb)->frags[i]);
+
+		if (sync_size < 0) {
+			skb_frag_size_add(
+					&skb_shinfo(nskb)->frags[i],
+					sync_size);
+		}
+
+		i++;
+	}
+	spin_unlock_irqrestore(&context->context.lock, flags);
+	skb_shinfo(nskb)->nr_frags = i;
+
+	nskb->dev = skb->dev;
+	skb_reset_mac_header(nskb);
+	skb_set_network_header(nskb, skb_network_offset(skb));
+	skb_set_transport_header(nskb, skb_transport_offset(skb));
+
+	memcpy(nskb->data, skb->data, headln);
+	nskb->len += nskb->data_len;
+
+	iph = ip_hdr(nskb);
+	iph->tot_len = nskb->len - skb_network_offset(nskb);
+	th = tcp_hdr(nskb);
+	tcp_seq -= nskb->data_len;
+	th->seq = htonl(tcp_seq);
+	tcp_seq_low = htons(tcp_seq);
+
+	mss = nskb->dev->mtu - (headln - skb_network_offset(nskb));
+	skb_shinfo(nskb)->gso_size = 0;
+	if (nskb->data_len > mss) {
+		skb_shinfo(nskb)->gso_size = mss;
+		skb_shinfo(nskb)->gso_segs = DIV_ROUND_UP(nskb->data_len, mss);
+	}
+	skb_shinfo(nskb)->gso_type = skb_shinfo(skb)->gso_type;
+
+	nskb->queue_mapping = skb->queue_mapping;
+
+	pet = (struct pet *)(nskb->data + sizeof(struct ethhdr));
+	pet->syndrome = SYNDROME_SYNC;
+	memcpy(pet->content.raw, &tcp_seq_low, sizeof(tcp_seq_low));
+
+	return nskb;
+}
+
 static int insert_pet(struct sk_buff *skb)
 {
 	struct ethhdr *eth;
 	struct pet *pet;
-	struct tls_offload_context *context;
+	struct mlx_tls_offload_context *context;
 
 	pr_debug("insert_pet started\n");
 	if (skb_cow_head(skb, sizeof(struct pet)))
@@ -174,26 +262,17 @@ static int insert_pet(struct sk_buff *skb)
 	pet->syndrome = SYNDROME_OFFLOAD_REQUIRED;
 
 	memset(pet->content.raw, 0, sizeof(pet->content.raw));
-	context = (struct tls_offload_context *) skb->sk->sk_tls_offload;
+	context = get_tls_context(skb->sk);
 	pet->content.send.sid_high = (context->swid >> 16) & 0xFF;
 	pet->content.send.sid_low = htons(context->swid & 0xFFFF);
-
-	if (unlikely(skb->sync_skb)) {
-		__be16 tcp_seq_low;
-
-		pet->syndrome = SYNDROME_SYNC;
-		tcp_seq_low = htons(ntohl(tcp_hdr(skb)->seq));
-		memcpy(pet->content.raw, &tcp_seq_low, sizeof(tcp_seq_low));
-	}
 
 	return 0;
 }
 
 static struct sk_buff *mlx_tls_tx_handler(struct sk_buff *skb)
 {
-	struct tls_offload_context *context;
+	struct mlx_tls_offload_context *context;
 	int datalen;
-	unsigned long flags;
 	u32 skb_seq;
 
 	pr_debug("mlx_tls_tx_handler started\n");
@@ -202,26 +281,33 @@ static struct sk_buff *mlx_tls_tx_handler(struct sk_buff *skb)
 		goto out;
 
 	datalen = skb->len - (skb_transport_offset(skb) + tcp_hdrlen(skb));
-	if (!datalen && !skb->sync_skb)
+	if (!datalen)
 		goto out;
 
 	skb_seq =  ntohl(tcp_hdr(skb)->seq);
 
-	context = (struct tls_offload_context *) skb->sk->sk_tls_offload;
+	context = get_tls_context(skb->sk);
 	pr_err("mlx_tls_tx_handler: mapping: %u cpu %u size %u with swid %u expectedSN: %u actualSN: %u\n",
 			skb->queue_mapping, smp_processor_id(), skb->len,
-			context->swid, context->expectedSN,
+			context->swid, context->context.expectedSN,
 			skb_seq);
 
 	insert_pet(skb);
-	if (!spin_trylock_irqsave(&context->lock, flags)) {
-		pr_info("spin lock for data with swid:%u is busy\n",
-				context->swid);
-		spin_lock_irqsave(&context->lock, flags);
-	}
 
-	context->expectedSN = skb_seq + datalen;
-	spin_unlock_irqrestore(&context->lock, flags);
+	if (context->context.expectedSN != skb_seq) {
+		struct sk_buff *sync_skb = create_sync_skb(skb, context);
+
+		if (!sync_skb) {
+			dev_kfree_skb_any(skb);
+			skb = NULL;
+			goto out;
+		}
+		sync_skb->next = skb;
+		skb = sync_skb;
+		pr_info("Sending sync packet\n");
+	}
+	context->context.expectedSN = skb_seq + datalen;
+
 out:
 	return skb;
 }
