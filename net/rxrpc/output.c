@@ -15,8 +15,6 @@
 #include <linux/gfp.h>
 #include <linux/skbuff.h>
 #include <linux/export.h>
-#include <linux/udp.h>
-#include <linux/ip.h>
 #include <net/sock.h>
 #include <net/af_rxrpc.h>
 #include "ar-internal.h"
@@ -40,12 +38,14 @@ struct rxrpc_pkt_buffer {
 static size_t rxrpc_fill_out_ack(struct rxrpc_call *call,
 				 struct rxrpc_pkt_buffer *pkt)
 {
+	rxrpc_serial_t serial;
 	rxrpc_seq_t hard_ack, top, seq;
 	int ix;
 	u32 mtu, jmax;
 	u8 *ackp = pkt->acks;
 
 	/* Barrier against rxrpc_input_data(). */
+	serial = call->ackr_serial;
 	hard_ack = READ_ONCE(call->rx_hard_ack);
 	top = smp_load_acquire(&call->rx_top);
 
@@ -53,7 +53,7 @@ static size_t rxrpc_fill_out_ack(struct rxrpc_call *call,
 	pkt->ack.maxSkew	= htons(call->ackr_skew);
 	pkt->ack.firstPacket	= htonl(hard_ack + 1);
 	pkt->ack.previousPacket	= htonl(call->ackr_prev_seq);
-	pkt->ack.serial		= htonl(call->ackr_serial);
+	pkt->ack.serial		= htonl(serial);
 	pkt->ack.reason		= call->ackr_reason;
 	pkt->ack.nAcks		= top - hard_ack;
 
@@ -71,11 +71,14 @@ static size_t rxrpc_fill_out_ack(struct rxrpc_call *call,
 
 	mtu = call->conn->params.peer->if_mtu;
 	mtu -= call->conn->params.peer->hdrsize;
-	jmax = (call->nr_jumbo_dup > 3) ? 1 : rxrpc_rx_jumbo_max;
+	jmax = (call->nr_jumbo_bad > 3) ? 1 : rxrpc_rx_jumbo_max;
 	pkt->ackinfo.rxMTU	= htonl(rxrpc_rx_mtu);
 	pkt->ackinfo.maxMTU	= htonl(mtu);
-	pkt->ackinfo.rwind	= htonl(rxrpc_rx_window_size);
+	pkt->ackinfo.rwind	= htonl(call->rx_winsize);
 	pkt->ackinfo.jumbo_max	= htonl(jmax);
+
+	trace_rxrpc_tx_ack(call, hard_ack + 1, serial, call->ackr_reason,
+			   top - hard_ack);
 
 	*ackp++ = 0;
 	*ackp++ = 0;
@@ -139,6 +142,11 @@ int rxrpc_send_call_packet(struct rxrpc_call *call, u8 type)
 	switch (type) {
 	case RXRPC_PACKET_TYPE_ACK:
 		spin_lock_bh(&call->lock);
+		if (!call->ackr_reason) {
+			spin_unlock_bh(&call->lock);
+			ret = 0;
+			goto out;
+		}
 		n = rxrpc_fill_out_ack(call, pkt);
 		call->ackr_reason = 0;
 
@@ -179,7 +187,7 @@ int rxrpc_send_call_packet(struct rxrpc_call *call, u8 type)
 			     &msg, iov, ioc, len);
 
 	if (ret < 0 && call->state < RXRPC_CALL_COMPLETE) {
-		switch (pkt->whdr.type) {
+		switch (type) {
 		case RXRPC_PACKET_TYPE_ACK:
 			rxrpc_propose_ACK(call, pkt->ack.reason,
 					  ntohs(pkt->ack.maxSkew),
@@ -216,6 +224,15 @@ int rxrpc_send_data_packet(struct rxrpc_connection *conn, struct sk_buff *skb)
 	msg.msg_control = NULL;
 	msg.msg_controllen = 0;
 	msg.msg_flags = 0;
+
+	if (IS_ENABLED(CONFIG_AF_RXRPC_INJECT_LOSS)) {
+		static int lose;
+		if ((lose++ & 7) == 7) {
+			rxrpc_lose_skb(skb, rxrpc_skb_tx_lost);
+			_leave(" = 0 [lose]");
+			return 0;
+		}
+	}
 
 	/* send the packet with the don't fragment bit set if we currently
 	 * think it's small enough */
@@ -260,6 +277,24 @@ send_fragmentable:
 					  (char *)&opt, sizeof(opt));
 		}
 		break;
+
+#ifdef CONFIG_AF_RXRPC_IPV6
+	case AF_INET6:
+		opt = IPV6_PMTUDISC_DONT;
+		ret = kernel_setsockopt(conn->params.local->socket,
+					SOL_IPV6, IPV6_MTU_DISCOVER,
+					(char *)&opt, sizeof(opt));
+		if (ret == 0) {
+			ret = kernel_sendmsg(conn->params.local->socket, &msg,
+					     iov, 1, iov[0].iov_len);
+
+			opt = IPV6_PMTUDISC_DO;
+			kernel_setsockopt(conn->params.local->socket,
+					  SOL_IPV6, IPV6_MTU_DISCOVER,
+					  (char *)&opt, sizeof(opt));
+		}
+		break;
+#endif
 	}
 
 	up_write(&conn->params.local->defrag_sem);
@@ -272,10 +307,7 @@ send_fragmentable:
  */
 void rxrpc_reject_packets(struct rxrpc_local *local)
 {
-	union {
-		struct sockaddr sa;
-		struct sockaddr_in sin;
-	} sa;
+	struct sockaddr_rxrpc srx;
 	struct rxrpc_skb_priv *sp;
 	struct rxrpc_wire_header whdr;
 	struct sk_buff *skb;
@@ -292,32 +324,21 @@ void rxrpc_reject_packets(struct rxrpc_local *local)
 	iov[1].iov_len = sizeof(code);
 	size = sizeof(whdr) + sizeof(code);
 
-	msg.msg_name = &sa;
+	msg.msg_name = &srx.transport;
 	msg.msg_control = NULL;
 	msg.msg_controllen = 0;
 	msg.msg_flags = 0;
-
-	memset(&sa, 0, sizeof(sa));
-	sa.sa.sa_family = local->srx.transport.family;
-	switch (sa.sa.sa_family) {
-	case AF_INET:
-		msg.msg_namelen = sizeof(sa.sin);
-		break;
-	default:
-		msg.msg_namelen = 0;
-		break;
-	}
 
 	memset(&whdr, 0, sizeof(whdr));
 	whdr.type = RXRPC_PACKET_TYPE_ABORT;
 
 	while ((skb = skb_dequeue(&local->reject_queue))) {
-		rxrpc_see_skb(skb);
+		rxrpc_see_skb(skb, rxrpc_skb_rx_seen);
 		sp = rxrpc_skb(skb);
-		switch (sa.sa.sa_family) {
-		case AF_INET:
-			sa.sin.sin_port = udp_hdr(skb)->source;
-			sa.sin.sin_addr.s_addr = ip_hdr(skb)->saddr;
+
+		if (rxrpc_extract_addr_from_skb(&srx, skb) == 0) {
+			msg.msg_namelen = srx.transport_len;
+
 			code = htonl(skb->priority);
 
 			whdr.epoch	= htonl(sp->hdr.epoch);
@@ -329,13 +350,9 @@ void rxrpc_reject_packets(struct rxrpc_local *local)
 			whdr.flags	&= RXRPC_CLIENT_INITIATED;
 
 			kernel_sendmsg(local->socket, &msg, iov, 2, size);
-			break;
-
-		default:
-			break;
 		}
 
-		rxrpc_free_skb(skb);
+		rxrpc_free_skb(skb, rxrpc_skb_rx_freed);
 	}
 
 	_leave("");

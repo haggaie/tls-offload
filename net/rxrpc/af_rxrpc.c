@@ -45,7 +45,7 @@ u32 rxrpc_epoch;
 atomic_t rxrpc_debug_id;
 
 /* count of skbs currently in use */
-atomic_t rxrpc_n_skbs;
+atomic_t rxrpc_n_tx_skbs, rxrpc_n_rx_skbs;
 
 struct workqueue_struct *rxrpc_workqueue;
 
@@ -106,19 +106,25 @@ static int rxrpc_validate_address(struct rxrpc_sock *rx,
 	case AF_INET:
 		if (srx->transport_len < sizeof(struct sockaddr_in))
 			return -EINVAL;
-		_debug("INET: %x @ %pI4",
-		       ntohs(srx->transport.sin.sin_port),
-		       &srx->transport.sin.sin_addr);
 		tail = offsetof(struct sockaddr_rxrpc, transport.sin.__pad);
 		break;
 
+#ifdef CONFIG_AF_RXRPC_IPV6
 	case AF_INET6:
+		if (srx->transport_len < sizeof(struct sockaddr_in6))
+			return -EINVAL;
+		tail = offsetof(struct sockaddr_rxrpc, transport) +
+			sizeof(struct sockaddr_in6);
+		break;
+#endif
+
 	default:
 		return -EAFNOSUPPORT;
 	}
 
 	if (tail < len)
 		memset((void *)srx + tail, 0, len - tail);
+	_debug("INET: %pISp", &srx->transport);
 	return 0;
 }
 
@@ -299,7 +305,7 @@ void rxrpc_kernel_end_call(struct socket *sock, struct rxrpc_call *call)
 {
 	_enter("%d{%d}", call->debug_id, atomic_read(&call->usage));
 	rxrpc_release_call(rxrpc_sk(sock->sk), call);
-	rxrpc_put_call(call, rxrpc_call_put);
+	rxrpc_put_call(call, rxrpc_call_put_kernel);
 }
 EXPORT_SYMBOL(rxrpc_kernel_end_call);
 
@@ -401,6 +407,23 @@ static int rxrpc_sendmsg(struct socket *sock, struct msghdr *m, size_t len)
 
 	switch (rx->sk.sk_state) {
 	case RXRPC_UNBOUND:
+		rx->srx.srx_family = AF_RXRPC;
+		rx->srx.srx_service = 0;
+		rx->srx.transport_type = SOCK_DGRAM;
+		rx->srx.transport.family = rx->family;
+		switch (rx->family) {
+		case AF_INET:
+			rx->srx.transport_len = sizeof(struct sockaddr_in);
+			break;
+#ifdef CONFIG_AF_RXRPC_IPV6
+		case AF_INET6:
+			rx->srx.transport_len = sizeof(struct sockaddr_in6);
+			break;
+#endif
+		default:
+			ret = -EAFNOSUPPORT;
+			goto error_unlock;
+		}
 		local = rxrpc_lookup_local(&rx->srx);
 		if (IS_ERR(local)) {
 			ret = PTR_ERR(local);
@@ -551,7 +574,8 @@ static int rxrpc_create(struct net *net, struct socket *sock, int protocol,
 		return -EAFNOSUPPORT;
 
 	/* we support transport protocol UDP/UDP6 only */
-	if (protocol != PF_INET)
+	if (protocol != PF_INET &&
+	    IS_ENABLED(CONFIG_AF_RXRPC_IPV6) && protocol != PF_INET6)
 		return -EPROTONOSUPPORT;
 
 	if (sock->type != SOCK_DGRAM)
@@ -843,7 +867,8 @@ static void __exit af_rxrpc_exit(void)
 	proto_unregister(&rxrpc_proto);
 	rxrpc_destroy_all_calls();
 	rxrpc_destroy_all_connections();
-	ASSERTCMP(atomic_read(&rxrpc_n_skbs), ==, 0);
+	ASSERTCMP(atomic_read(&rxrpc_n_tx_skbs), ==, 0);
+	ASSERTCMP(atomic_read(&rxrpc_n_rx_skbs), ==, 0);
 	rxrpc_destroy_all_locals();
 
 	remove_proc_entry("rxrpc_conns", init_net.proc_net);
