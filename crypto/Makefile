@@ -129,8 +129,7 @@ obj-$(CONFIG_CRYPTO_USER_API_HASH) += algif_hash.o
 obj-$(CONFIG_CRYPTO_USER_API_SKCIPHER) += algif_skcipher.o
 obj-$(CONFIG_CRYPTO_USER_API_RNG) += algif_rng.o
 obj-$(CONFIG_CRYPTO_USER_API_AEAD) += algif_aead.o
-CFLAGS_af_ktls.o = -Iaf_ktls
-obj-$(CONFIG_CRYPTO_USER_KTLS) += af_ktls/af_ktls.o
+obj-$(CONFIG_CRYPTO_USER_KTLS) += af_ktls/
 
 #
 # generic algorithms and the async_tx api
