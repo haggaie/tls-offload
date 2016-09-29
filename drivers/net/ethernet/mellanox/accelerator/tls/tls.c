@@ -419,7 +419,7 @@ int mlx_tls_add_one(struct mlx_accel_core_device *accel_device)
 	}
 
 	netdev = accel_device->ib_dev->get_netdev(accel_device->ib_dev,
-			MLX_ACCEL_PORT_NUM);
+			accel_device->port);
 	if (!netdev) {
 		pr_err("mlx_tls_add_one(): Failed to retrieve net device from ib device\n");
 		ret = -EINVAL;
