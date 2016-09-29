@@ -99,7 +99,7 @@ void mlx_tls_dev_release(struct kobject *kobj);
 int mlx_tls_netdev_event(struct notifier_block *this,
 		unsigned long event, void *ptr);
 
-void mlx_tls_add_one(struct mlx_accel_core_device *accel_device);
+int mlx_tls_add_one(struct mlx_accel_core_device *accel_device);
 void mlx_tls_remove_one(struct mlx_accel_core_device *accel_device);
 
 struct mlx_tls_dev *mlx_tls_find_dev_by_netdev(struct net_device *netdev);
