@@ -44,6 +44,18 @@ static DEFINE_MUTEX(mlx_tls_mutex);
 /* End of context identifiers range (exclusive) */
 #define SWID_END (1<<24)
 
+static struct sk_buff *mlx_tls_tx_handler(struct sk_buff *skb,
+					  struct mlx5e_swp_info *swp_info);
+static struct sk_buff *mlx_tls_rx_handler(struct sk_buff *skb)
+{
+	return skb;
+}
+
+static struct mlx5e_accel_client_ops mlx_tls_client_ops = {
+	.rx_handler   = mlx_tls_rx_handler,
+	.tx_handler   = mlx_tls_tx_handler,
+};
+
 /* must hold mlx_tls_mutex to call this function */
 static struct mlx_tls_dev *find_mlx_tls_dev_by_netdev(
 		struct net_device *netdev)
@@ -269,7 +281,8 @@ static int insert_pet(struct sk_buff *skb)
 	return 0;
 }
 
-static struct sk_buff *mlx_tls_tx_handler(struct sk_buff *skb)
+static struct sk_buff *mlx_tls_tx_handler(struct sk_buff *skb,
+					  struct mlx5e_swp_info *swp_info)
 {
 	struct mlx_tls_offload_context *context;
 	int datalen;
@@ -293,6 +306,7 @@ static struct sk_buff *mlx_tls_tx_handler(struct sk_buff *skb)
 			skb_seq);
 
 	insert_pet(skb);
+	/* TODO: do something useful with swp_info?!? */
 
 	if (context->context.expectedSN != skb_seq) {
 		struct sk_buff *sync_skb = create_sync_skb(skb, context);
@@ -309,11 +323,6 @@ static struct sk_buff *mlx_tls_tx_handler(struct sk_buff *skb)
 	context->context.expectedSN = skb_seq + datalen;
 
 out:
-	return skb;
-}
-
-static struct sk_buff *mlx_tls_rx_handler(struct sk_buff *skb)
-{
 	return skb;
 }
 
@@ -418,25 +427,19 @@ void mlx_tls_add_one(struct mlx_accel_core_device *accel_device)
 	}
 	dev->netdev = netdev;
 
-	ret = mlx5e_register_rx_handler(netdev, mlx_tls_rx_handler);
+	ret = mlx_accel_core_client_ops_register(netdev, &mlx_tls_client_ops);
 	if (ret) {
-		pr_err("mlx_tls_add_one(): Got error while registering RX handler %d\n", ret);
+		pr_err("mlx_tls_add_one(): Failed to register client ops %d\n",
+		       ret);
 		goto err_netdev;
 	}
-
-	ret = mlx5e_register_tx_handler(netdev, mlx_tls_tx_handler);
-	if (ret) {
-		pr_err("mlx_tls_add_one(): Got error while registering TX handler %d\n", ret);
-		goto err_rx_register;
-	}
-
 	ret = tls_sysfs_init_and_add(&dev->kobj,
 			mlx_accel_core_kobj(dev->accel_device),
 			"%s",
 			"accel_dev");
 	if (ret) {
 		pr_err("mlx_tls_add_one(): Got error from kobject_init_and_add %d\n", ret);
-		goto err_tx_register;
+		goto err_ops_register;
 	}
 
 	mutex_init(&dev->id_mutex);
@@ -447,10 +450,8 @@ void mlx_tls_add_one(struct mlx_accel_core_device *accel_device)
 	dev->netdev->ktls_ops = &mlx_ktls_ops;
 	goto out;
 
-err_tx_register:
-	mlx5e_unregister_tx_handler(netdev);
-err_rx_register:
-	mlx5e_unregister_rx_handler(netdev);
+err_ops_register:
+	mlx_accel_core_client_ops_unregister(netdev);
 err_netdev:
 	dev_put(netdev);
 err_conn:
@@ -466,6 +467,7 @@ out:
 void mlx_tls_remove_one(struct mlx_accel_core_device *accel_device)
 {
 	struct mlx_tls_dev *dev;
+	struct net_device *netdev = NULL;
 
 	pr_debug("mlx_tls_remove_one called for %s\n", accel_device->name);
 
@@ -473,9 +475,9 @@ void mlx_tls_remove_one(struct mlx_accel_core_device *accel_device)
 
 	list_for_each_entry(dev, &mlx_tls_devs, accel_dev_list) {
 		if (dev->accel_device == accel_device) {
-			dev->netdev->ktls_ops = NULL;
-			mlx5e_unregister_rx_handler(dev->netdev);
-			mlx5e_unregister_tx_handler(dev->netdev);
+			netdev = dev->netdev;
+			netdev->ktls_ops = NULL;
+			mlx_accel_core_client_ops_unregister(netdev);
 			mlx_accel_core_conn_destroy(dev->conn);
 			mlx_tls_free(dev);
 			break;
