@@ -86,7 +86,7 @@ static ssize_t mlx_tls_sqpn_read(struct mlx_tls_dev *dev, char *buf)
 
 static ssize_t mlx_tls_sgid_read(struct mlx_tls_dev *dev, char *buf)
 {
-	union ib_gid *sgid = &dev->conn->gid;
+	union ib_gid *sgid = (union ib_gid *)&dev->conn->fpga_qpc.remote_ip;
 
 	return sprintf(buf, "%04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x\n",
 			be16_to_cpu(((__be16 *)sgid->raw)[0]),
@@ -101,13 +101,13 @@ static ssize_t mlx_tls_sgid_read(struct mlx_tls_dev *dev, char *buf)
 
 static ssize_t mlx_tls_dqpn_read(struct mlx_tls_dev *dev, char *buf)
 {
-	return sprintf(buf, "%d\n", dev->conn->dqpn);
+	return sprintf(buf, "%d\n", dev->conn->fpga_qpn);
 }
 
 static ssize_t mlx_tls_dqpn_write(struct mlx_tls_dev *dev, const char *buf,
 		size_t count)
 {
-	sscanf(buf, "%u\n", &dev->conn->dqpn);
+	sscanf(buf, "%u\n", &dev->conn->fpga_qpn);
 	/* [SR] TODO: We are planning on keeping this interface in
 	 * final version as well? If so, how will we know what DQPN to
 	 * use? I guess we should have "allocate-user-QP-slot" API in
@@ -119,7 +119,7 @@ static ssize_t mlx_tls_dqpn_write(struct mlx_tls_dev *dev, const char *buf,
 
 static ssize_t mlx_tls_dgid_read(struct mlx_tls_dev *dev, char *buf)
 {
-	union ib_gid *dgid = &dev->conn->dgid;
+	union ib_gid *dgid = (union ib_gid *)&dev->conn->fpga_qpc.fpga_ip;
 
 	return sprintf(buf, "%04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x\n",
 			be16_to_cpu(((__be16 *)dgid->raw)[0]),
@@ -135,7 +135,7 @@ static ssize_t mlx_tls_dgid_read(struct mlx_tls_dev *dev, char *buf)
 static ssize_t mlx_tls_dgid_write(struct mlx_tls_dev *dev, const char *buf,
 		size_t count)
 {
-	union ib_gid *dgid = &dev->conn->dgid;
+	union ib_gid *dgid = (union ib_gid *)&dev->conn->fpga_qpc.fpga_ip;
 	int i = 0;
 	sscanf(buf, "%04hx:%04hx:%04hx:%04hx:%04hx:%04hx:%04hx:%04hx\n",
 			&(((__be16 *) dgid->raw)[0]),
