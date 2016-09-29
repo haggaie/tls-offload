@@ -148,23 +148,6 @@ struct mlx_tls_dev *mlx_tls_find_dev_by_netdev(struct net_device *netdev)
 	return dev;
 }
 
-static void remove_pet(struct sk_buff *skb, struct pet *pet)
-{
-	struct ethhdr *old_eth;
-	struct ethhdr *new_eth;
-
-	pr_debug("remove_pet started\n");
-
-	memcpy(pet, skb->data, sizeof(*pet));
-	old_eth = (struct ethhdr *)(skb->data - sizeof(struct ethhdr));
-	new_eth = (struct ethhdr *)(skb_pull_inline(skb, sizeof(struct pet)) -
-		sizeof(struct ethhdr));
-	skb->mac_header += sizeof(struct pet);
-
-	memmove(new_eth, old_eth, 2 * ETH_ALEN);
-	/* Ethertype is already in its new place */
-}
-
 #define SYNDROME_OFFLOAD_REQUIRED 32
 #define SYNDROME_SYNC 33
 
