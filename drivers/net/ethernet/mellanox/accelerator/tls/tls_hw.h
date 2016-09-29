@@ -36,7 +36,7 @@
 
 #include "tls.h"
 
-#include "../../../../crypto/af_ktls_offload.h"
+#include <crypto/af_ktls/af_ktls_offload.h>
 
 int mlx_tls_hw_init(void);
 void mlx_tls_hw_deinit(void);
