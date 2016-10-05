@@ -114,6 +114,7 @@ int mlx_ktls_hw_start_cmd(struct mlx_tls_dev *dev, struct sock *sk,
 	if (!buf)
 		return -ENOMEM;
 
+	buf->data = buf + 1;
 	buf->data_size = sizeof(*cmd);
 
 	cmd = (struct setup_stream_cmd *) buf->data;
