@@ -51,9 +51,42 @@ static struct sk_buff *mlx_tls_rx_handler(struct sk_buff *skb)
 	return skb;
 }
 
+static u16 mlx_tls_mtu_handler(u16 mtu, bool is_sw2hw)
+{
+	return mtu + (is_sw2hw ? 1 : -1) * sizeof(struct pet);
+}
+
+static netdev_features_t mlx_tls_feature_chk(struct sk_buff *skb,
+					     struct net_device *netdev,
+					     netdev_features_t features,
+					     bool *done)
+{
+	return features;
+}
+
+int mlx_tls_get_count(struct net_device *netdev)
+{
+	return 0;
+}
+
+int mlx_tls_get_strings(struct net_device *netdev, uint8_t *data)
+{
+	return 0;
+}
+
+int mlx_tls_get_stats(struct net_device *netdev, u64 *data)
+{
+	return 0;
+}
+
 static struct mlx5e_accel_client_ops mlx_tls_client_ops = {
 	.rx_handler   = mlx_tls_rx_handler,
 	.tx_handler   = mlx_tls_tx_handler,
+	.feature_chk  = mlx_tls_feature_chk,
+	.mtu_handler  = mlx_tls_mtu_handler,
+	.get_count = mlx_tls_get_count,
+	.get_strings = mlx_tls_get_strings,
+	.get_stats = mlx_tls_get_stats,
 };
 
 /* must hold mlx_tls_mutex to call this function */
